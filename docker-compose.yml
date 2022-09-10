@@ -1,0 +1,287 @@
+version: "3.9"
+
+services:
+  api:
+    container_name: tweetapi
+    image: tweetapp-api
+#    build:
+#      context: ./com.tweetapp.Controller
+#      dockerfile: Dockerfile
+#      args:
+#        context: .
+    volumes:
+      - ./com.tweetapp.Controller/appsettings.json:/app/appsettings.json
+    ports:
+      - "7008:80"
+      - "7009:443"
+    networks:
+      - elasticnetwork
+      - frontnet
+      - dbnet
+    depends_on:
+#      - migrations
+      - kafka
+      - elasticsearch
+      - db
+  
+  frontend:
+    container_name: react
+    image: tweetui
+    #image: tweetui-vedgya
+    build:
+      context: ./TweetApp UI
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    stdin_open: true
+    networks:
+      - frontnet
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - REACT_APP_API_URL="http://localhost:7008/api/v1.0/tweets"
+    volumes:
+      #- "C:/Users/Vedgya/Desktop/TweetApp/TweetApp UI/:/usr/src/app/my-app"
+      - ./TweetApp UI:/usr/src/app/tweet-app
+      - /usr/src/app/tweet-app/node_modules
+    
+  db:
+    container_name: sqlserverDB
+    image: "mcr.microsoft.com/mssql/server:2019-latest"
+    ports:
+      - "1415:1433"
+    networks:
+      dbnet:
+        aliases:
+          - sqlserverDB
+    environment:
+      SA_PASSWORD: 'Docker4$$ql'
+      ACCEPT_EULA: "Y"
+#    depends_on:
+#      - migrations
+#
+#  migrations:
+#    build:
+#      context: ../
+#      dockerfile: Migrations.Dockerfile
+
+
+# ELK with kafka
+ 
+  
+  kibana:
+    container_name: kibana
+    image: docker.elastic.co/kibana/kibana:8.4.1
+    volumes:
+      - "./kibana.yml:/usr/share/kibana/config/kibana.yml"
+    ports:
+      - 5601:5601
+    depends_on:
+      - elasticsearch
+      - logstash
+    environment:
+     ELASTICSEARCH_HOSTS: "http://elasticsearch:9200"
+    networks:
+      - elasticnetwork
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s -I http://localhost:5601 | grep -q 'HTTP/1.1 302 Found'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
+
+  elasticsearch:
+    container_name: elasticsearch
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.4.1
+    ports:
+      - 9200:9200
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/datafile
+      #- "./elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml"
+    environment:
+      #- node.name=elasticsearch
+      - xpack.monitoring.templates.enabled=true
+      - xpack.watcher.enabled=false
+      - cluster.name=docker-cluster
+      - xpack.security.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+    #keystore.path: certs/http.p12
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - discovery.type=single-node
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    networks:
+      - elasticnetwork
+        
+        
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.4.1
+    container_name: logstash
+    volumes:
+    - "./logstash.conf:/usr/share/logstash/config/logstash.conf"
+    #- "./logstash.yml:/usr/share/logstash/config/logstash.yml"
+    #restart: always
+    command: logstash -f /usr/share/logstash/config/logstash.conf
+    ports:
+    - "9600:9600"
+    - "7777:7777"
+    networks:
+    - elasticnetwork
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper
+    networks:
+      - elasticnetwork
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - 2181:2181
+  
+  
+  kafka:
+    container_name: kafka
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      - zookeeper
+      - logstash
+    networks:
+      - elasticnetwork
+    ports:
+      - 9092:9092
+      - 9094:9094
+    volumes:
+      - ./data/kafka1/data:/var/lib/kafka/data
+      - ./data/kafka1/etc:/etc/kafka
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_LISTENERS: INTERNAL://:9092,OUTSIDE://:9094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,OUTSIDE://host.docker.internal:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,OUTSIDE:PLAINTEXT
+      JVM_OPTS: "-Xmx12g -Xms12g -XX:MaxPermSize=1024m"
+    extra_hosts:
+      - "host.docker.internal:172.17.0.1"
+
+    
+  kafka-topics-generator:
+    image: confluentinc/cp-kafka:latest
+    depends_on:
+      - kafka
+    command: >
+      bash -c
+        "sleep 15s &&
+        kafka-topics --create --topic=TweetAppTopic --if-not-exists --bootstrap-server=kafka:9092"
+
+#  control-center:
+#    image: confluentinc/cp-enterprise-control-center:latest
+#    hostname: control-center
+#    depends_on:
+#      - kafka
+#    networks:
+#      - elasticnetwork
+#    ports:
+#      - "9021:9021"
+#    environment:
+#      CONTROL_CENTER_BOOTSTRAP_SERVERS: 'kafka:9092'
+#      CONTROL_CENTER_REPLICATION_FACTOR: 1
+#      PORT: 9021
+
+
+networks:
+  elasticnetwork:
+    driver: bridge
+  frontnet:
+    driver: bridge
+  dbnet:
+    driver: bridge
+
+volumes:
+  elasticsearch-data:
+    driver: local
+    
+  # removing apache and filebeat
+#  filebeat:
+#    image: docker.elastic.co/beats/filebeat:5.4.3
+#    container_name: filebeat
+#    user: root
+#    command: filebeat -e -strict.perms=false
+#    volumes:
+#      - "./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro"
+#      #- "./apache-logs:/apache-logs"
+#      - './data:/usr/share/filebeat/data:rw'
+#      - '/var/log/nginx:/usr/share/services/nginx'
+#      - '/home/ubuntu/.pm2/logs:/usr/share/services/node'
+#    logging:
+#      driver: "json-file"
+#      options:
+#        max-file: "5"
+#        max-size: "10m"
+#    networks:
+#      - elasticnetwork
+#    depends_on:
+#      - kafka
+
+    
+    
+#  apache:
+#      image: lzrbear/docker-apache2-ubuntu
+#      container_name: apache
+#      volumes:
+#        - "./apache-logs:/var/log/apache2"
+#      networks:
+#        - elasticnetwork
+#      ports:
+#        - "8888:80"
+#      depends_on:
+#        - logstash
+
+
+#  kafka:
+#    container_name: kafka
+#    image: wurstmeister/kafka
+#    hostname: kafka
+#    depends_on: 
+#      - zookeeper
+#    links:
+#      - zookeeper
+#    ports:
+#      - 9092:9092
+#      - 9094:9094
+#    environment:
+#      KAFKA_BROKER_ID: 1
+#      KAFKA_ADVERTISED_PORT: 9092
+#      KAFKA_LOG_RETENTION_HOURS: "168"
+#      KAFKA_LOG_RETENTION_BYTES: "100000000"
+#      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+#      KAFKA_CREATE_TOPICS: "TweetAppTopic:1:1"
+#      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+#      #KAFKA_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+#      #KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+#      #KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+#    healthcheck:
+#      test: [ "CMD", "kafka-topics", "--bootstrap-server", "kafka:9092", "--list" ]
+#      interval: 30s
+#      timeout: 10s
+#      retries: 10
+
+    #  zookeeper:
+#    container_name: zookeeper
+#    hostname: zookeeper
+#    image: elevy/zookeeper:latest
+#    environment:
+#      MYID: 1
+#      SERVERS: zookeeper
+#    ports:
+#      - "2181:2181"
+

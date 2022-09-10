@@ -1,0 +1,11 @@
+xpack.security.enabled: false
+xpack.security.http.ssl.enabled: false
+xpack.security.transport.ssl.enabled: false
+#xpack.security.http.ssl.key: certs/node1.key
+#xpack.security.http.ssl.certificate: certs/node1.crt
+#xpack.security.http.ssl.certificate_authorities: certs/ca.crt
+#xpack.security.transport.ssl.key: certs/node1.key
+#xpack.security.transport.ssl.certificate: certs/node1.crt
+#xpack.security.transport.ssl.certificate_authorities: certs/ca.crt
+#discovery.seed_hosts: [ "node1.elastic.test.com" ]
+#cluster.initial_master_nodes: [ "node1" ]
